@@ -1,0 +1,26 @@
+# Render Blueprint — see https://render.com/docs/blueprint-spec
+#
+# Lets you deploy via "New -> Blueprint" pointing at your repo, instead of
+# manually filling in build/start commands and env vars through Render's
+# dashboard UI by hand. Optional — the dashboard path in README.md's
+# deployment section works identically without this file, this just removes
+# a few manual-entry steps and the chance of a typo in the start command.
+#
+# BACKEND_API_KEY is deliberately NOT given a value here (sync: false) —
+# Render prompts for it during deploy instead, so the secret never sits in
+# this file or gets committed to the repo, same reasoning as HF Spaces'
+# "set it as a secret, not a baked-in value" from the earlier deployment
+# path.
+
+services:
+  - type: web
+    name: promptassist-backend
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements-hf.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: AUDIT_VIA_GEMINI
+        value: "1"
+      - key: BACKEND_API_KEY
+        sync: false
