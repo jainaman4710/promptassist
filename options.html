@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>PromptAssist — Settings</title>
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    body { max-width: 480px; margin: 0 auto; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div>
+      <h1>PromptAssist <span class="dim">· settings</span></h1>
+      <p class="subtitle">Your Gemini key is stored only in this browser's local storage. It is never sent anywhere except directly to Gemini when you run the tool.</p>
+    </div>
+
+    <div class="field">
+      <label for="gemini-key">Gemini API key</label>
+      <input type="password" id="gemini-key" placeholder="AIza…" autocomplete="off" />
+      <div id="gemini-key-hint" class="hint"></div>
+    </div>
+
+    <div class="row">
+      <button id="save-btn" class="primary">Save</button>
+      <button id="toggle-visibility-btn" class="secondary">Show key</button>
+    </div>
+
+    <div id="save-status" class="status success">Saved.</div>
+
+    <div class="field" style="margin-top: 8px;">
+      <label>Custom sites</label>
+      <p class="subtitle" style="margin: 0 0 10px 0;">
+        Add another AI tool site beyond the three built in. PromptAssist can't verify a
+        selector for a site it's never seen — it uses a best-effort generic guess (largest
+        visible text field near the bottom of the page) unless you provide a specific CSS
+        selector below.
+      </p>
+      <div class="row">
+        <input type="text" id="new-site-input" placeholder="e.g. poe.com" />
+        <button id="add-site-btn" class="secondary">Add site</button>
+      </div>
+      <div id="custom-sites-list" class="custom-sites-list" style="margin-top: 10px;"></div>
+    </div>
+
+    <div class="disclaimer">
+      Draft prompt text is sent to Gemini only when you click Enhance (in the side panel
+      or on the page). On supported AI-tool pages, PromptAssist also reads the input
+      field's text when you type into it (only to show its icon and offer to help —
+      nothing is sent anywhere at that point) and writes the enhanced prompt into that
+      field if you click "Apply to page." Nothing else is collected, logged, or
+      transmitted by this extension.
+    </div>
+  </div>
+
+  <script src="options.js"></script>
+</body>
+</html>

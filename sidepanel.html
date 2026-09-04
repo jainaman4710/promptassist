@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>PromptAssist</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="wrap">
+    <div>
+      <h1>PromptAssist <span class="dim">· prototype</span></h1>
+      <p class="subtitle">Paste a rough draft prompt. Get an audited, structurally improved version.</p>
+    </div>
+
+    <div id="keys-warning" class="status error"></div>
+    <div id="site-status" class="status success" style="display:none;"></div>
+
+    <!-- Screen 1: input -->
+    <div id="screen-input">
+      <div class="field">
+        <label for="draft-input">Draft prompt</label>
+        <textarea id="draft-input" placeholder="e.g. write me something about recursion for my assignment, keep it simple"></textarea>
+      </div>
+      <div class="row" style="margin-top: 10px;">
+        <button id="enhance-btn" class="primary">Enhance</button>
+        <button id="clear-btn" class="secondary">Clear</button>
+        <button id="read-page-btn" class="secondary" style="display:none;">Read from page</button>
+      </div>
+    </div>
+
+    <!-- Screen 2: loading -->
+    <div id="screen-loading" class="loading">
+      <div class="step-list-vertical" id="loading-step-list"></div>
+    </div>
+
+    <!-- Screen 3: result -->
+    <div id="screen-result" class="result">
+      <div class="field">
+        <label for="result-box">Enhanced prompt</label>
+        <textarea id="result-box" class="result-box" rows="10"></textarea>
+      </div>
+
+      <details class="recap">
+        <summary>▸ Recap — what changed</summary>
+        <div class="recap-body" id="recap-body">—</div>
+      </details>
+
+      <div class="row">
+        <button id="copy-btn" class="primary">Copy</button>
+        <button id="send-page-btn" class="primary" style="display:none;">Send to page</button>
+        <button id="back-btn" class="secondary">Start over</button>
+      </div>
+    </div>
+
+    <div class="footer-note">Draft prompt text is sent to Gemini/Groq only when you click Enhance. On supported AI-tool pages, PromptAssist also reads the field as you type (to show its icon) and writes to it on Apply.</div>
+  </div>
+
+  <script src="shared.js"></script>
+  <script src="gemini.js"></script>
+  <script src="groq.js"></script>
+  <script src="pipeline.js"></script>
+  <script src="sidepanel.js"></script>
+</body>
+</html>
