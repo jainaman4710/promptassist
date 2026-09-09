@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "name": "PromptAssist (Track A Prototype)",
+  "version": "0.1.0",
+  "description": "Audit-driven prompt enhancement prototype. Paste a draft prompt, get a structured, improved version.",
+  "permissions": ["storage", "sidePanel", "scripting"],
+  "host_permissions": [
+    "https://generativelanguage.googleapis.com/*",
+    "https://chatgpt.com/*",
+    "https://gemini.google.com/*",
+    "https://claude.ai/*"
+  ],
+  "optional_host_permissions": ["https://*/*"],
+  "content_scripts": [
+    {
+      "matches": ["https://chatgpt.com/*", "https://gemini.google.com/*", "https://claude.ai/*"],
+      "js": ["site-adapters.js", "floating-ui.js", "content-script.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "commands": {
+    "enhance-and-inject": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+E",
+        "mac": "Command+Shift+E"
+      },
+      "description": "Enhance the draft prompt on this page"
+    }
+  },
+  "action": {
+    "default_title": "Open PromptAssist"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "options_page": "options.html",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
