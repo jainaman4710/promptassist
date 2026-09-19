@@ -98,15 +98,6 @@ if (!window.__promptAssistContentScriptLoaded) {
   // close control (floating-ui.js), which hides it for the rest of THIS page's lifetime
   // only — nothing is stored, so it reappears normally on the next page load or
   // navigation, consistent with the extension retaining no state across page loads.
-  (function showPersistentIcon() {
-    const adapter = getCurrentAdapter();
-    if (!adapter || typeof window.showIdleTrigger !== "function") return;
-    window.showIdleTrigger();
-    // Let the browser actually paint before checking whether something (most likely a
-    // cosmetic ad/annoyance blocker) is overriding our styles and hiding it anyway.
-    setTimeout(checkWidgetActuallyVisible, 500);
-  })();
-
   // One-time check: if the widget claims to be showing but its rendered geometry says
   // otherwise (something external — most likely an ad/annoyance blocker's cosmetic
   // filter — is overriding our styles), tell the background script so it can point the
@@ -125,4 +116,36 @@ if (!window.__promptAssistContentScriptLoaded) {
       chrome.runtime.sendMessage({ action: "widgetBlocked" }).catch(() => {});
     }
   }
+
+  window.__paCheckWidgetActuallyVisible = checkWidgetActuallyVisible;
 }
+
+// DELIBERATELY OUTSIDE the double-injection guard above. The guard exists to stop a
+// second onMessage listener being registered, which is a real problem; it was never meant
+// to stop the icon being re-shown, which is harmless and idempotent. Having the mount sit
+// inside it meant background.js's recovery re-injection could not actually restore a
+// missing icon — the whole block was skipped on the second run, so the one repair path
+// the extension had was a no-op in exactly the situation it existed for.
+(function mountPersistentIcon() {
+  const adapter = getCurrentAdapter();
+  if (!adapter || typeof window.showIdleTrigger !== "function") return;
+
+  // Starts the observer/history/interval triggers that keep the icon alive across
+  // same-document navigations. Self-guarded, so repeat injections don't stack watchdogs.
+  if (typeof window.__paInstallMountWatchdog === "function") {
+    window.__paInstallMountWatchdog();
+  }
+
+  if (typeof window.__paRemountIfDetached === "function") {
+    // Re-injection case: only re-mounts if the node actually went away, and respects a
+    // user dismissal rather than overriding it.
+    window.__paRemountIfDetached();
+  }
+  window.showIdleTrigger();
+
+  // Let the browser actually paint before checking whether something (most likely a
+  // cosmetic ad/annoyance blocker) is overriding our styles and hiding it anyway.
+  if (typeof window.__paCheckWidgetActuallyVisible === "function") {
+    setTimeout(window.__paCheckWidgetActuallyVisible, 500);
+  }
+})();

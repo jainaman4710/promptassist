@@ -57,6 +57,10 @@
 
   <script src="shared.js"></script>
   <script src="gemini.js"></script>
+  <!-- vendor/zod.bundle.js and schemas.js must load before pipeline.js — see the matching
+       comment in background.js's importScripts call for why. -->
+  <script src="vendor/zod.bundle.js"></script>
+  <script src="schemas.js"></script>
   <script src="pipeline.js"></script>
   <script src="sidepanel.js"></script>
 </body>

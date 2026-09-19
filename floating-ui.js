@@ -32,7 +32,10 @@ if (!window.__promptAssistFloatingUILoaded) {
   window.__promptAssistFloatingUILoaded = true;
 
   const state = { host: null, root: null, hideTimeout: null, mode: "hidden", dismissedForSession: false };
-  const STEP_ORDER = ["audit", "structural", "critique"];
+  // Grammar runs first and unconditionally, so it belongs in this fixed list. cot and
+  // fewshot stay out of it — they only run when their flags fire, so a row for them would
+  // sit pending forever on the runs where they never execute.
+  const STEP_ORDER = ["grammar", "audit", "structural", "critique"];
   const ICON_SIZE = 60;
 
   function el(tag, attrs = {}, children = []) {
@@ -144,7 +147,16 @@ if (!window.__promptAssistFloatingUILoaded) {
   `;
 
   function ensureFloatingUI() {
-    if (state.host) return state.root;
+    // isConnected, not just a truthiness check on state.host. This was the actual bug
+    // behind "the icon is there on the first load and gone on the second": state.host
+    // outlives the node it points at. If anything detaches our host from the document —
+    // the page swapping out documentElement's children, a procedural filter rule removing
+    // it, a framework remount — every later call returned a shadow root belonging to a
+    // detached node, so every show/hide call succeeded silently against nothing. There
+    // was no code path anywhere that could notice or recover from it.
+    if (state.host && state.host.isConnected) return state.root;
+    state.host = null;
+    state.root = null;
 
     state.host = document.createElement("div");
     // Deliberately no id, no class, no inline style, nothing distinguishing at all in the
@@ -176,7 +188,7 @@ if (!window.__promptAssistFloatingUILoaded) {
       STEP_ORDER.map((key, i) =>
         el("div", { id: `step-${key}`, class: "step pending" }, [
           el("span", { class: "step-icon" }),
-          el("span", { text: ["Audit", "Structural pass", "Self-critique"][i] }),
+          el("span", { text: ["Grammar", "Audit", "Structural pass", "Self-critique"][i] }),
         ])
       )
     );
@@ -409,7 +421,96 @@ if (!window.__promptAssistFloatingUILoaded) {
     hideFloatingStatus();
   }
 
+  // ---------------------------------------------------------------------------------
+  // SELF-HEALING MOUNT
+  //
+  // Everything above assumes the host element stays in the document for the page's
+  // lifetime once injected. On a single-page app that assumption does not hold, and when
+  // it breaks there is no second injection coming: a same-document (SPA) navigation does
+  // not re-run content scripts, so whatever Chrome injected at document_idle is all this
+  // page will ever get. That is why a one-shot mount reads as "works on the first load,
+  // gone after the second" — the second "load" is the app re-rendering, not a new
+  // document, and our node did not survive it.
+  //
+  // Three independent triggers below, deliberately overlapping, because each one covers a
+  // case the others miss:
+  //   - MutationObserver: instant, catches the node being removed from documentElement.
+  //   - history/popstate hooks: catch SPA route changes that rebuild the page wholesale.
+  //   - low-frequency interval: the backstop for anything the other two can't see, such
+  //     as documentElement itself being replaced (which kills the observer with it).
+  function remountIfDetached() {
+    if (state.dismissedForSession) return;
+    if (state.host && state.host.isConnected) return;
+    state.host = null;
+    state.root = null;
+    // A running pipeline's card went with the old DOM, so there's nothing to restore it
+    // to. Falling back to the idle icon is the honest recovery: the user can see the
+    // extension is alive and re-run it, which beats an invisible extension.
+    if (state.mode === "running" || state.mode === "card") state.mode = "idle";
+    showIdleTrigger();
+  }
+
+  // Chrome tears down the content script's extension context when the extension is
+  // reloaded or updated, but leaves the already-injected JS running on the page. Every
+  // chrome.* call from that point throws "Extension context invalidated", so the watchdog
+  // has to stop rather than loop forever on a dead context.
+  function extensionContextAlive() {
+    try {
+      return Boolean(chrome.runtime && chrome.runtime.id);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function installMountWatchdog() {
+    if (window.__promptAssistWatchdogInstalled) return;
+    window.__promptAssistWatchdogInstalled = true;
+
+    try {
+      const observer = new MutationObserver(() => {
+        if (!extensionContextAlive()) return observer.disconnect();
+        remountIfDetached();
+      });
+      // childList only, no subtree: the host is a direct child of documentElement, so
+      // this fires on our own node being removed and on essentially nothing else. A
+      // subtree observer on a chat app would fire on every streamed token.
+      observer.observe(document.documentElement, { childList: true });
+    } catch (e) {
+      // Observer setup failing is survivable — the interval below still covers it.
+    }
+
+    // SPA route changes. pushState/replaceState fire no event of their own, so they get
+    // wrapped. The wrapper calls through to the original first and never throws into the
+    // page's own navigation, since breaking the host site would be far worse than a
+    // missing icon.
+    const hook = (name) => {
+      const original = history[name];
+      if (typeof original !== "function") return;
+      history[name] = function () {
+        const result = original.apply(this, arguments);
+        try {
+          setTimeout(remountIfDetached, 0);
+        } catch (e) {}
+        return result;
+      };
+    };
+    hook("pushState");
+    hook("replaceState");
+    window.addEventListener("popstate", () => setTimeout(remountIfDetached, 0));
+    // bfcache restore: the DOM usually comes back intact, but re-asserting is free.
+    window.addEventListener("pageshow", () => remountIfDetached());
+
+    const timer = setInterval(() => {
+      if (!extensionContextAlive()) return clearInterval(timer);
+      remountIfDetached();
+    }, 3000);
+  }
+
   window.showFloatingStatus = showFloatingStatus;
   window.showReviewCard = showReviewCard;
   window.showIdleTrigger = showIdleTrigger;
+  // Exposed so content-script.js can re-assert the icon on a re-injection without
+  // duplicating any of the state logic above.
+  window.__paRemountIfDetached = remountIfDetached;
+  window.__paInstallMountWatchdog = installMountWatchdog;
 }

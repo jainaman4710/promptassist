@@ -2360,3 +2360,275 @@ a {
   color: var(--accent-strong);
 }
 ```
+
+---
+
+# v16 changes — grammar stage, real restructuring, attachments, terse recaps
+
+Six issues were raised against the shipped prototype. Two of them were not bugs: the
+behaviour being complained about was never built. The rest are below with what changed.
+
+## 1-3. "Structural enhancement doesn't actually restructure anything"
+
+**Diagnosis.** `explicit_structure` and "restructuring the prompt" were being treated as
+the same feature. They aren't, and only the first one existed:
+
+- `explicit_structure` fires when the draft says nothing about *how the response should
+  look* (length, format, audience, tone). Its entire instruction to the structural pass was
+  one line: "add concrete guidance on length, format, audience, or tone." That produces one
+  added sentence aimed at the target AI. It never touched the draft's own layout.
+- Nothing anywhere in the five prompts reorganised the prompt text itself. No XML tagging,
+  no sectioning, no bullets. The structural prompt contained an explicit instruction
+  pulling the other way: *"you are adding scaffolding around what they wrote, not replacing
+  what they wrote."*
+
+So an unstructured draft that already had any length/format/audience/tone signal in it
+would score `explicit_structure` false and come back reporting nothing needed changing —
+correct by the pipeline's definition of "structured", wrong by the user's.
+
+Separately, nothing forbade multi-line output, bullets, or numbering. But every worked
+example in all five prompts was a single paragraph, and few-shot examples are the real
+instruction — so single-paragraph output is what the model produced, every time.
+
+**Fix.**
+- The audit gained a new top-level field, `restructure` (boolean), independent of
+  `technique_flags` and excluded from the confidence gap count. It has its own rule section
+  with a two-part mechanical test (several *kinds* of content + delivered as
+  undifferentiated prose), explicit FALSE cases (short single-purpose drafts, drafts the
+  user already organised, missing-content problems), and two new worked examples.
+- The structural pass gained rule 6: when `restructure` is true, reorganise the layout into
+  XML-style `<task>` / `<context>` / `<input>` / `<output>` sections, with bullets or
+  numbering inside a section once it holds three or more separate items. This is defined as
+  a **layout** change — sentences may be *moved*, never reworded, condensed, merged, or
+  dropped — which is what keeps it compatible with the "never rewrite the user's content"
+  principle rather than breaking it.
+- A FORMATTING section was added to the structural prompt stating outright that line
+  breaks, bullets, numbering, and section tags are allowed, and that the single-paragraph
+  worked examples are that way because those drafts were short, not because prose is
+  required. The cot and few-shot passes were told to preserve an already-sectioned layout
+  and place their additions inside `<output>` rather than flattening it.
+
+Note on the section labels: they're named after the four anatomy elements the whole
+pipeline already runs on. If "four D" refers to a specific named framework with four
+specific labels, swapping the tag names is a one-line change to rule 6.
+
+## 4. Grammar checking
+
+Built as a **sixth stage that runs first**, not folded into the structural pass. Reasons:
+
+- It's the one thing in the pipeline that has to touch the user's actual words, so it gets
+  its own explicit, narrow carve-out rather than contaminating a pass whose whole job is
+  the opposite. Scope is mechanical only: spelling, agreement, tense, articles/plurals,
+  punctuation, apostrophes, capitalisation. Explicitly forbidden: rewording grammatical
+  text, adding/removing/reordering content, changing jargon or identifiers, normalising
+  dialect or regional spelling, and **anything inside pasted code, logs, or quoted data** —
+  silently fixing a typo in pasted code can destroy the bug being asked about.
+- Running first means the audit scores clean text instead of penalising typos.
+- Everything downstream now receives the corrected draft as "the original draft", including
+  self-critique — which is told explicitly not to read the grammar fixes as unauthorised
+  edits. Passing the raw draft there instead would have caused critique to revert them.
+- Failure is soft: an unusable response falls back to the untouched draft, so a grammar
+  hiccup can never blank or truncate the real prompt.
+
+Cost: one extra Gemini call per run. Deliberate.
+
+## 5. Recap on the no-change path
+
+Every pass with nothing to report now returns exactly `No change.` — two words, no
+explanation. `joinRecaps()` drops those entries whenever some other pass *did* change
+something, so the user never reads "No change." next to a real change; the bare string only
+survives when every pass came back clean.
+
+## 6. Attached files
+
+**Diagnosis.** `input_data` recognised literally-pasted text as the only way data could
+arrive. The rulebook had no concept of a native file upload, so "the file is attached"
+scored `input_data: missing`, and the structural pass's fix for that is to insert a
+`[paste the ... here]` placeholder — demanding content the user had already provided.
+
+**Fix.** The audit now scores an attachment reference ("it's attached", "the doc I
+uploaded", "the screenshot above", "in the PDF I shared") as `input_data: present`, with an
+explicit instruction not to hedge it down to `weak` on the grounds that it can't be
+verified. `missing` now means only: no indication the data was provided at all, or the user
+explicitly said they didn't include it. The structural pass is forbidden from inserting a
+paste placeholder when an attachment is referenced, regardless of what the audit said, and
+self-critique treats such a placeholder as a defect to remove.
+
+## Contract changes worth knowing about
+
+- `AUDIT_SCHEMA` has a new required boolean, `restructure`. Any stored audit fixtures or
+  eval rows will need it added.
+- All 20 audit worked examples were updated with `"restructure":false`.
+- `runPipeline` emits a new first progress step, `grammar`. `floating-ui.js`'s `STEP_ORDER`
+  was updated to match; `sidepanel.js` builds its step rows dynamically and needed no
+  change.
+
+---
+
+# v17 — the icon disappearing on ChatGPT's second load
+
+## Symptom
+
+On chatgpt.com the page appears to load twice on open. The icon shows on the first, and is
+gone after the second. Neither load is user-initiated.
+
+## Root cause
+
+The second "load" is almost certainly **not a second document**. ChatGPT is a single-page
+app: after the first HTML document paints, the client router swaps the view (bare `/` to
+`/c/<conversation-id>`, or the logged-out shell to the logged-in app) without a real
+navigation. Two consequences, and the bug lives in the second one:
+
+1. A same-document navigation does **not** re-run content scripts. Whatever Chrome
+   injected at `document_idle` is all that page will ever get. There is no second
+   injection coming to fix anything.
+2. The extension mounted exactly once and never checked its own work again.
+
+The actual defect is three lines of code, all in the "mount once and assume it stays"
+family:
+
+- **`ensureFloatingUI()` early-returned on `if (state.host)`** — a truthiness check on a
+  variable, not a check that the node is still in the document. `state.host` happily
+  outlives the node it points at. Once the host is detached, that function returns a
+  shadow root belonging to a detached element, and every subsequent `showIdleTrigger` /
+  `showFloatingStatus` / `showReviewCard` call succeeds silently against nothing. Nothing
+  logs, nothing errors, nothing recovers.
+- **No detachment detection at all** — no MutationObserver, no history hook, no
+  re-assertion of any kind. The one thing that could have caught this never ran.
+- **`showPersistentIcon()` sat inside the `__promptAssistContentScriptLoaded` guard** —
+  so `background.js`'s recovery re-injection (`sendMessageWithRetry` → `executeScript`),
+  the extension's only existing repair path, was a guaranteed no-op for this exact
+  failure: the whole block is skipped on a second execution in the same document.
+
+So *any* cause of detachment was terminal. Ranked by likelihood on ChatGPT specifically:
+a router transition that rebuilds the page wholesale; the logged-out-to-logged-in app
+handoff; a procedural filter rule (`:remove()`) from an annoyance blocker. Note the
+cosmetic-filter theory is the weakest of the three: the host deliberately carries no id,
+class, or inline style, so there is nothing for a selector-based hide rule to target.
+
+## Confirming which one it is
+
+`content-script.js` already logs `[PromptAssist] content-script.js was executed on this
+page.` unconditionally. Open the console on chatgpt.com and count it across both "loads":
+
+- **Logged once** → the second load is same-document. The SPA explanation is right.
+- **Logged twice, icon still missing** → the second load *is* a real document, and
+  something is removing the node after injection. That points at an extension or filter
+  rule, and the watchdog below will now fight back against it every 3 seconds, which is
+  itself diagnostic.
+
+## Fix
+
+Mounting is now self-healing rather than one-shot.
+
+- `ensureFloatingUI()` checks `state.host.isConnected`, and rebuilds from scratch when the
+  node is gone instead of handing back a detached shadow root.
+- `remountIfDetached()` is the single recovery entry point. It respects a user dismissal,
+  no-ops when the node is fine, and falls back to the idle icon if the DOM was wiped
+  mid-run — a re-runnable icon beats an invisible extension.
+- Three overlapping triggers, each covering what the others miss:
+  - a `MutationObserver` on `documentElement` (`childList` only, no subtree — the host is
+    a direct child, so this fires on our own removal and almost nothing else; a subtree
+    observer on a chat app would fire on every streamed token),
+  - wrapped `history.pushState` / `replaceState` plus `popstate` and `pageshow`, for route
+    changes that rebuild the page,
+  - a 3-second interval as the backstop for anything the other two cannot see, including
+    `documentElement` itself being replaced, which takes the observer down with it.
+- The watchdog stops itself when `chrome.runtime.id` goes undefined, i.e. after the
+  extension is reloaded or updated, since every `chrome.*` call from an orphaned content
+  script throws `Extension context invalidated`.
+- `showPersistentIcon()` moved **outside** the double-injection guard. The guard's real job
+  is preventing a duplicate `onMessage` listener; re-showing the icon is idempotent and
+  should never have been behind it. Background's recovery injection now actually recovers.
+
+Verified under jsdom: removal → re-mount, dismissal survives removal and re-injection,
+re-injection restores a genuinely missing icon, the watchdog installs exactly once, and the
+patched `history.pushState` still navigates normally.
+
+## Not changed, but worth knowing
+
+`manifest.json` matches `https://chatgpt.com/*` only. Links to the old `chat.openai.com`
+host redirect to chatgpt.com, so the final document is matched either way — but if a flow
+is ever found that *stays* on another OpenAI host, it needs adding to both `matches` and
+`host_permissions`.
+
+---
+
+# v18 — Zod migration
+
+Two problems, one fix. The critique call's checklist fields are genuinely mixed-type
+(`true`, `false`, or the string `"not_flagged"`), which Gemini's request-time schema
+can't express with one fixed type — that's why `callGeminiJSONFreeform` existed, with
+**no response-time shape check of any kind**. Separately, the other five calls' Gemini
+schemas were hand-written JS objects living in `pipeline.js`, duplicating the shape each
+prompt's own text already specifies — two representations of the same thing, with nothing
+keeping them in sync if one changed and the other didn't.
+
+## What changed
+
+- **New file, `schemas.js`.** One Zod schema per pipeline call — `GrammarResultSchema`,
+  `AuditResultSchema`, `StructuralResultSchema`, `CotResultSchema`, `FewshotResultSchema`,
+  `CritiqueResultSchema` — plus two functions:
+  - `zodToGeminiSchema(schema)`: derives the request-time Gemini `responseSchema` from a
+    Zod definition. Deliberately narrow — only understands object/string/enum/boolean/
+    number, the exact building blocks these six schemas use, and throws loudly on anything
+    else rather than guessing at a mapping.
+  - `validateOrThrow(schema, data, label)`: runs the parsed response through `.safeParse()`
+    and throws a clear, field-by-field error on failure instead of letting bad data flow
+    downstream to fail somewhere far less diagnosable.
+- **`CritiqueResultSchema` expresses the union directly**:
+  `z.union([z.boolean(), z.literal("not_flagged")])`. This is the whole point of the
+  migration — the one call that never had any response-time check now does. Gemini still
+  gets no request-time schema for this call (the union still can't be expressed that
+  direction), but the response is validated for the first time.
+- **The five hand-written `*_SCHEMA` objects in `pipeline.js` are gone**, replaced by
+  `zodToGeminiSchema(...ResultSchema)`. One definition now drives both what Gemini is asked
+  to produce and what's checked on the way back — the duplication-drift risk is gone by
+  construction, not by discipline.
+- **Every pass function now validates its response** before returning it. `AuditResultSchema`
+  additionally tightens `confidence` to `.min(0).max(1)` — a real constraint Gemini's own
+  schema has no way to express (`NUMBER` is unbounded), so this is strictly new coverage,
+  not a restatement of something already enforced.
+- **Grammar fails soft on a validation failure**, returning `null` — matching the existing
+  `cleanedDraft` fallback in `runPipeline`, which already treats a falsy grammar result as
+  "use the raw draft". A malformed response here was always meant to be recoverable; now it
+  actually is, instead of throwing an exception that fallback code could never catch.
+- **Critique failures are retried, not fatal.** A `CritiqueResultSchema` validation failure
+  is now treated the same as a failed critique iteration — retried up to the existing
+  `maxCritiqueIterations` cap, same as a `passed: false` result always was. If every
+  iteration fails validation, the pipeline falls through with the last known-good enhanced
+  prompt rather than crashing, and `criticalIssuesFound` reflects the uncertainty.
+- **New vendor dependency, `vendor/zod.bundle.js`.** MV3 forbids loading remote code, so
+  this is Zod v3.25.76 bundled as a single IIFE (`esbuild --bundle --format=iife`) exposing
+  `self.Zod.z`, vendored directly rather than fetched at runtime. Rebuild instructions are
+  in `vendor/README.md`. Load order matters and is documented at both call sites:
+  `background.js`'s `importScripts(...)` and `sidepanel.html`'s `<script>` tags now load
+  `vendor/zod.bundle.js` and `schemas.js` before `pipeline.js`, since `pipeline.js` calls
+  `zodToGeminiSchema()` at its own top level, not just inside functions.
+
+## Verified
+
+Six checks run against the real files (`schemas.js`, `gemini.js`, `pipeline.js`) loaded via
+`vm.runInThisContext` with a mocked `fetchWithRetry`, reproducing the actual shared-global-
+scope semantics of `importScripts`/sequential `<script>` tags rather than Node's module
+semantics:
+
+1. `zodToGeminiSchema(AuditResultSchema)` produces the exact same shape the old hand-written
+   `AUDIT_SCHEMA` had (required fields, the `restructure` boolean, `input_data`'s four-value
+   enum).
+2. A valid audit response passes straight through.
+3. A confidence of `1.4` — valid by Gemini's own schema, invalid by Zod's `.min(0).max(1)` —
+   correctly throws, naming `confidence` in the error.
+4. A grammar response missing `recap_addition` fails validation and `grammarPass` returns
+   `null`, not an exception — the existing fallback path stays intact.
+5. A critique response using the `"not_flagged"` string alongside real booleans validates
+   correctly — the exact case that had no coverage before this migration.
+6. A full `runPipeline` run survives an invalid critique response (a `5` where a boolean or
+   `"not_flagged"` was expected) on iteration 1 and completes correctly on iteration 2,
+   without the pipeline crashing.
+
+## Not changed
+
+The `callGeminiJSONFreeform` call for critique is still schema-less on the request side —
+that's a genuine Gemini API limitation (one fixed type per field), not something this
+migration could remove. What moved is response-side: from zero checking to a real one.

@@ -1,6 +1,9 @@
 // Service workers use importScripts (not ES module imports) to bring in the plain
 // global-scope pipeline functions shared with the side panel.
-importScripts("shared.js", "gemini.js", "pipeline.js");
+// vendor/zod.bundle.js and schemas.js must load before pipeline.js — pipeline.js calls
+// zodToGeminiSchema() and validateOrThrow() at its own top level (building the request-time
+// schemas), not just inside functions, so schemas.js's globals have to exist first.
+importScripts("shared.js", "gemini.js", "vendor/zod.bundle.js", "schemas.js", "pipeline.js");
 
 chrome.action.onClicked.addListener((tab) => {
   chrome.sidePanel.open({ tabId: tab.id });
